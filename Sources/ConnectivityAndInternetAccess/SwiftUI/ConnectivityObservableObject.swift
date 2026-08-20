@@ -3,6 +3,7 @@ import SwiftUI
 import Combine
 
 /// SwiftUI ObservableObject that publishes live `NetworkState` changes for view bindings.
+@MainActor
 public final class ConnectivityObserver: ObservableObject {
     @Published public private(set) var networkState: NetworkState
     @Published public private(set) var lastDiagnosticResult: ReachabilityResult?
@@ -17,7 +18,7 @@ public final class ConnectivityObserver: ObservableObject {
 
         // Start passive observation
         self.token = ConnectivityAndInternetAccess.observeNetwork { [weak self] state in
-            DispatchQueue.main.async {
+            Task { @MainActor [weak self] in
                 self?.networkState = state
             }
         }
