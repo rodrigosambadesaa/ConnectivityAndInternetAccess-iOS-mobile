@@ -19,7 +19,9 @@ public class ConnectivityViewController: UIViewController {
 
         // Start passive observation when view appears
         networkToken = ConnectivityAndInternetAccess.observeNetwork { [weak self] state in
-            self?.updateStatusLabel(state: state)
+            Task { @MainActor [weak self] in
+                self?.updateStatusLabel(state: state)
+            }
         }
     }
 
@@ -76,14 +78,16 @@ public class ConnectivityViewController: UIViewController {
         diagnoseButton.isEnabled = false
 
         ConnectivityAndInternetAccess.checkInternetAsyncDefault { [weak self] result in
-            self?.diagnoseButton.isEnabled = true
-            self?.diagnosticResultLabel.text = """
-            Diagnostic Result:
-            Reachable: \(result.isReachable ? "YES" : "NO")
-            Via: \(result.reachedHost ?? "N/A")
-            Stage: \(result.stage.description)
-            Duration: \(result.durationMs)ms
-            """
+            Task { @MainActor [weak self] in
+                self?.diagnoseButton.isEnabled = true
+                self?.diagnosticResultLabel.text = """
+                Diagnostic Result:
+                Reachable: \(result.isReachable ? "YES" : "NO")
+                Via: \(result.reachedHost ?? "N/A")
+                Stage: \(result.stage.description)
+                Duration: \(result.durationMs)ms
+                """
+            }
         }
     }
 }

@@ -30,8 +30,10 @@ public final class ConnectivityObserver: ObservableObject {
         isDiagnosing = true
 
         connectivityEngine.checkInternetAsync { [weak self] result in
-            self?.lastDiagnosticResult = result
-            self?.isDiagnosing = false
+            Task { @MainActor [weak self] in
+                self?.lastDiagnosticResult = result
+                self?.isDiagnosing = false
+            }
         }
     }
 
