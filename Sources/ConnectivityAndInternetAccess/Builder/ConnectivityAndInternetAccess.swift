@@ -200,7 +200,13 @@ public final class ConnectivityAndInternetAccess: Sendable {
                 dnsGroup.enter()
                 DispatchQueue.global(qos: .userInitiated).async {
                     defer { dnsGroup.leave() }
-                    let success = DNSProbeStrategy.probeDirectUDP(resolverIP: resolver, hostname: targetHost, timeoutMs: Int(self.configuration.dnsStageBudget * 1000))
+                    let success: Bool
+                    if let customDNS = self.configuration.dnsProbeStrategy {
+                        success = customDNS(descriptor)
+                    } else {
+                        success = DNSProbeStrategy.probeDirectUDP(resolverIP: resolver, hostname: targetHost, timeoutMs: Int(self.configuration.dnsStageBudget * 1000))
+                    }
+
                     if success {
                         lock.lock()
                         if directDNSSucceededHost == nil {
