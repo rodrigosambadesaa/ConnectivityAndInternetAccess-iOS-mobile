@@ -1,0 +1,20 @@
+# Xcode / Swift Package Manager gitignore
+.DS_Store
+/.build
+/Packages
+/*.xcodeproj
+/*.xcworkspace
+!default.mode1v3
+!default.mode2v3
+!default.pbxuser
+!default.perspectivev3
+xcuserdata/
+DerivedData/
+.swiftpm/
+*.manifest
+*.dSYM
+
+# Temporary / Scratch files
+scratch/
+*.tmp
+*.log

@@ -1,0 +1,46 @@
+name: CI & Automated Testing
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  test-macOS:
+    name: Build & Test (macOS / Xcode)
+    runs-on: macos-14
+    strategy:
+      matrix:
+        xcode: ['15.4', '16.0']
+      fail-fast: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode version
+        run: |
+          sudo xcode-select -s /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Build Package
+        run: swift build -v
+
+      - name: Run Tests with Code Coverage
+        run: swift test --enable-code-coverage --parallel -v
+
+      - name: Process Code Coverage
+        if: always()
+        run: |
+          XCTEST_PATH=$(swift build --show-bin-path)
+          xcrun llvm-cov report \
+            "$XCTEST_PATH/ConnectivityAndInternetAccessPackageTests.xctest/Contents/MacOS/ConnectivityAndInternetAccessPackageTests" \
+            -instr-profile="$XCTEST_PATH/codecov/default.profdata" || true
+
+      - name: Upload Test Results & Coverage Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-coverage-xcode-${{ matrix.xcode }}
+          path: .build/**/codecov/
