@@ -52,6 +52,12 @@ This document details the architectural mapping, verification matrix, unit testi
    - `testStaticObserveNetwork`: Verifies static observer convenience method.
    - `testAsyncAwaitConcurrencyAPI`: Verifies Swift Concurrency (`async/await`) API.
 
+6. **`LiveNetworkReachabilityTests.swift`**:
+   - `testLiveSystemDNSPreflightResolution`: Verifies live System DNS resolution (`apple.com`, `google.com`, `cloudflare.com`).
+   - `testLiveDirectUDPDNSProbes`: Verifies live raw UDP socket DNS queries to Cloudflare (`1.1.1.1`), Google (`8.8.8.8`), Quad9 (`9.9.9.9`).
+   - `testLiveHTTPProbeHostConnectivity`: Verifies live HTTP/HTTPS GET/HEAD probes against real endpoints (`apple.com`, `cloudflare.com`, `generate_204`).
+   - `testLiveFullDiagnosticPipelineExecution`: Verifies end-to-end multi-stage reachability engine execution on live network connections.
+
 ---
 
 ## ⚙️ GitHub Actions CI Workflow Setup
