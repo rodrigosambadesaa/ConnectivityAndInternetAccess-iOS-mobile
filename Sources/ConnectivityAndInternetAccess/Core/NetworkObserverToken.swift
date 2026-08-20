@@ -2,7 +2,7 @@ import Foundation
 
 /// Token returned when subscribing to passive network changes.
 /// Calling `close()` or `cancel()` unregisters the listener idempotently.
-public final class NetworkObserverToken: Sendable {
+public final class NetworkObserverToken: @unchecked Sendable {
     private let onCancel: @Sendable () -> Void
     private let isCancelledAtomic = NSLock()
     private var _isCancelled = false

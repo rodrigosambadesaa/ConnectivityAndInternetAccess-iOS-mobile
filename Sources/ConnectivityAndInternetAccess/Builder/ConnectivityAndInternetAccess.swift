@@ -2,7 +2,7 @@ import Foundation
 import Network
 
 /// Cancellable request handle returned by `checkInternetAsync`.
-public final class ConnectivityRequest: Sendable {
+public final class ConnectivityRequest: @unchecked Sendable {
     private let isCancelledAtomic = NSLock()
     private var _isCancelled = false
 
