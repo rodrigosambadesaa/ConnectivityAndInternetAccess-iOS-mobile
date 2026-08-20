@@ -42,14 +42,14 @@ public final class ConnectivityBuilder {
 
     /// Sets a custom DNS probe strategy closure.
     @discardableResult
-    public func setDnsProbeStrategy(_ strategy: @Sendable @escaping DNSProbeStrategyClosure) -> ConnectivityBuilder {
+    public func setDnsProbeStrategy(_ strategy: @escaping DNSProbeStrategyClosure) -> ConnectivityBuilder {
         self.config.dnsProbeStrategy = strategy
         return self
     }
 
     /// Sets a custom HTTP probe strategy closure.
     @discardableResult
-    public func setHttpProbeStrategy(_ strategy: @Sendable @escaping HTTPProbeStrategyClosure) -> ConnectivityBuilder {
+    public func setHttpProbeStrategy(_ strategy: @escaping HTTPProbeStrategyClosure) -> ConnectivityBuilder {
         self.config.httpProbeStrategy = strategy
         return self
     }
