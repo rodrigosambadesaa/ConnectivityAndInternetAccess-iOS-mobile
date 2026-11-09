@@ -1,11 +1,9 @@
 import Foundation
 
-/// Closure type representing a custom HTTP probe strategy.
-/// Receives URL and timeout, returns success boolean, optional status code, and reached URL description.
+/// A custom HTTP probe receives a URL and a time budget and returns a typed result.
 public typealias HTTPProbeStrategyClosure = @Sendable (URL, TimeInterval) -> (success: Bool, statusCode: Int?, reachedURL: String)
 
-/// Custom URLSession delegate to handle redirect policies (e.g., disallowing redirects for strict captive portal checks).
-internal class NoRedirectDelegate: NSObject, URLSessionTaskDelegate {
+internal final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate {
     let allowRedirects: Bool
 
     init(allowRedirects: Bool) {
@@ -19,15 +17,28 @@ internal class NoRedirectDelegate: NSObject, URLSessionTaskDelegate {
         newRequest request: URLRequest,
         completionHandler: @escaping (URLRequest?) -> Void
     ) {
-        if allowRedirects {
-            completionHandler(request)
-        } else {
-            completionHandler(nil) // Disallow redirect
-        }
+        completionHandler(allowRedirects ? request : nil)
     }
 }
 
-/// Interface and default implementation for HTTP reachability probes.
+/// Ensures timeout callbacks never race the caller reading status and success.
+private final class ProbeResultBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: (success: Bool, statusCode: Int?) = (false, nil)
+
+    func set(_ value: (success: Bool, statusCode: Int?)) {
+        lock.lock()
+        self.value = value
+        lock.unlock()
+    }
+
+    func snapshot() -> (success: Bool, statusCode: Int?) {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+}
+
 public struct HTTPProbeStrategy: Sendable {
     public let customStrategy: HTTPProbeStrategyClosure?
 
@@ -35,54 +46,74 @@ public struct HTTPProbeStrategy: Sendable {
         self.customStrategy = customStrategy
     }
 
-    /// Performs an active HTTP/HTTPS probe to `targetURL`.
-    /// - Parameters:
-    ///   - targetURL: The endpoint URL to probe.
-    ///   - timeout: Timeout in seconds for the probe.
-    ///   - isStrictCaptivePortal: If `true`, redirects are rejected and status code 204 is required.
-    /// - Returns: Tuple containing success state, HTTP status code, and URL description.
+    /// Never accept arbitrary captive-portal HTML (including HTTP 200) as success.
+    /// 200 is only accepted for the *exact* well-known Apple success token.
+    static func isValidStrictResponse(
+        requestedURL: URL,
+        finalURL: URL,
+        status: Int,
+        data: Data
+    ) -> Bool {
+        guard requestedURL.scheme == finalURL.scheme,
+              requestedURL.host?.lowercased() == finalURL.host?.lowercased(),
+              requestedURL.path == finalURL.path,
+              requestedURL.query == finalURL.query else {
+            return false
+        }
+        if requestedURL.path.hasSuffix("/generate_204") {
+            return status == 204 && data.isEmpty
+        }
+        if requestedURL.scheme == "https",
+           requestedURL.host?.lowercased() == "www.apple.com",
+           requestedURL.path == "/library/test/success.html" {
+            return status == 200 &&
+                String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) == "Success"
+        }
+        return false
+    }
+
+    /// A bounded active probe. Strict mode rejects redirects, HTML interception,
+    /// and unexpected 200 responses; general mode only accepts 2xx.
     public static func probeURL(
         targetURL: URL,
         timeout: TimeInterval = 2.0,
         isStrictCaptivePortal: Bool = false
     ) -> (success: Bool, statusCode: Int?, reachedURL: String) {
-
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = timeout
-        configuration.timeoutIntervalForResource = timeout
-        configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        let budget = max(0.05, timeout)
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = budget
+        config.timeoutIntervalForResource = budget
+        config.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
 
         let delegate = NoRedirectDelegate(allowRedirects: !isStrictCaptivePortal)
-        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
-
-        var request = URLRequest(url: targetURL)
+        let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+        var request = URLRequest(url: targetURL, cachePolicy: .reloadIgnoringLocalCacheData)
         request.httpMethod = isStrictCaptivePortal ? "GET" : "HEAD"
-        request.setValue("close", forHTTPHeaderField: "Connection")
 
         let semaphore = DispatchSemaphore(value: 0)
-        var resultSuccess = false
-        var resultStatusCode: Int? = nil
-
-        let task = session.dataTask(with: request) { _, response, error in
+        let result = ProbeResultBox()
+        let task = session.dataTask(with: request) { data, response, error in
             defer { semaphore.signal() }
-            guard error == nil, let httpResponse = response as? HTTPURLResponse else {
-                return
-            }
-            resultStatusCode = httpResponse.statusCode
-
+            guard error == nil, let http = response as? HTTPURLResponse else { return }
+            let valid: Bool
             if isStrictCaptivePortal {
-                // Strict captive portal mode requires HTTP 204 No Content (or 200 for specific test URLs)
-                resultSuccess = (httpResponse.statusCode == 204 || httpResponse.statusCode == 200)
+                valid = isValidStrictResponse(
+                    requestedURL: targetURL,
+                    finalURL: http.url ?? targetURL,
+                    status: http.statusCode,
+                    data: data ?? Data()
+                )
             } else {
-                // Standard reachability accepts 200...399
-                resultSuccess = (200...399).contains(httpResponse.statusCode)
+                valid = (200...299).contains(http.statusCode)
             }
+            result.set((valid, http.statusCode))
         }
-
         task.resume()
-        _ = semaphore.wait(timeout: .now() + timeout + 0.5)
-        session.finishTasksAndInvalidate()
-
-        return (resultSuccess, resultStatusCode, targetURL.absoluteString)
+        let wait = semaphore.wait(timeout: .now() + budget)
+        if wait == .timedOut { task.cancel() }
+        session.invalidateAndCancel()
+        let completed = result.snapshot()
+        return (completed.success, completed.statusCode, targetURL.absoluteString)
     }
 }
