@@ -99,6 +99,7 @@ public final class ConnectivityAndInternetAccess: Sendable {
             let result = self.executeDiagnosticPipeline(request: request)
             guard !request.isCancelled else { return }
             DispatchQueue.main.async {
+                guard !request.isCancelled else { return }
                 completion(result)
             }
         }
@@ -142,7 +143,7 @@ public final class ConnectivityAndInternetAccess: Sendable {
         let startTime = DispatchTime.now()
         var attemptedHosts: [String] = []
 
-        let deadline = startTime + configuration.globalTimeout
+        let deadline = startTime + max(0.05, configuration.globalTimeout)
 
         // Check if strict captive portal mode is active
         if configuration.isStrictCaptivePortalMode {
@@ -155,28 +156,27 @@ public final class ConnectivityAndInternetAccess: Sendable {
             let hostDescriptor = "dns://system/\(targetHost)"
             attemptedHosts.append(hostDescriptor)
 
-            if let customDNS = configuration.dnsProbeStrategy {
-                if customDNS(hostDescriptor) {
-                    let elapsed = elapsedTimeMs(since: startTime)
-                    return ReachabilityResult(
-                        isReachable: true,
-                        reachedHost: hostDescriptor,
-                        attemptedHosts: attemptedHosts,
-                        durationMs: elapsed,
-                        stage: .systemDNS
-                    )
-                }
-            } else {
-                if DNSProbeStrategy.resolveSystemDNS(hostname: targetHost) {
-                    let elapsed = elapsedTimeMs(since: startTime)
-                    return ReachabilityResult(
-                        isReachable: true,
-                        reachedHost: hostDescriptor,
-                        attemptedHosts: attemptedHosts,
-                        durationMs: elapsed,
-                        stage: .systemDNS
-                    )
-                }
+            // getaddrinfo can block outside Swift's control. Never allow it to
+            // consume the caller's entire budget: run it on a worker and wait
+            // at most for the configured DNS preflight allowance.
+            let dnsGroup = DispatchGroup()
+            let success = LockedProbeSuccess()
+            dnsGroup.enter()
+            DispatchQueue.global(qos: .utility).async { [self] in
+                let ok = self.configuration.dnsProbeStrategy?(hostDescriptor)
+                    ?? DNSProbeStrategy.resolveSystemDNS(hostname: targetHost)
+                if ok { success.record(hostDescriptor) }
+                dnsGroup.leave()
+            }
+            let budget = min(max(0, configuration.dnsPreflightTimeout),
+                             max(0, configuration.globalTimeout))
+            _ = dnsGroup.wait(timeout: .now() + budget)
+            if success.first != nil, !request.isCancelled, DispatchTime.now() < deadline {
+                return ReachabilityResult(
+                    isReachable: true, reachedHost: hostDescriptor,
+                    attemptedHosts: attemptedHosts, durationMs: elapsedTimeMs(since: startTime),
+                    stage: .systemDNS
+                )
             }
         }
 
@@ -217,7 +217,9 @@ public final class ConnectivityAndInternetAccess: Sendable {
                 }
             }
 
-            _ = dnsGroup.wait(timeout: .now() + configuration.dnsStageBudget)
+            let dnsBudget = min(max(0, configuration.dnsStageBudget),
+                                max(0, Double(deadline.uptimeNanoseconds - DispatchTime.now().uptimeNanoseconds) / 1_000_000_000.0))
+            _ = dnsGroup.wait(timeout: .now() + dnsBudget)
 
             if let succeededHost = directDNSSucceededHost {
                 let elapsed = elapsedTimeMs(since: startTime)
@@ -241,7 +243,7 @@ public final class ConnectivityAndInternetAccess: Sendable {
             let lock = NSLock()
             var httpSucceededHost: String? = nil
 
-            let remainingTime = max(0.5, Double(deadline.uptimeNanoseconds - DispatchTime.now().uptimeNanoseconds) / 1_000_000_000.0)
+            let remainingTime = max(0.05, Double(deadline.uptimeNanoseconds - DispatchTime.now().uptimeNanoseconds) / 1_000_000_000.0)
 
             for hostString in configuration.hosts {
                 lock.lock()
@@ -355,5 +357,21 @@ public final class ConnectivityAndInternetAccess: Sendable {
         let now = DispatchTime.now()
         let nano = now.uptimeNanoseconds - startTime.uptimeNanoseconds
         return Int64(nano / 1_000_000)
+    }
+}
+
+/// The result remains valid after the preflight wait expires and the worker exits.
+private final class LockedProbeSuccess: @unchecked Sendable {
+    private let lock = NSLock()
+    private var host: String?
+    var first: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return host
+    }
+    func record(_ value: String) {
+        lock.lock()
+        if host == nil { host = value }
+        lock.unlock()
     }
 }

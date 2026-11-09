@@ -15,10 +15,10 @@ public struct NetworkState: Equatable, Codable, Sendable, CustomStringConvertibl
     /// Indicates whether the path is in Low Data Mode or constrained mode.
     public let isConstrained: Bool
 
-    /// Indicates whether the OS reported valid Internet capability on this path.
+    /// Internet validation is unknown from NWPathMonitor alone (false for passive snapshots).
     public let isInternetValidated: Bool
 
-    /// Indicates whether the OS detected a captive portal on this path.
+    /// Captive portal cannot be detected passively by NWPathMonitor (false for passive snapshots).
     public let isCaptivePortalDetected: Bool
 
     /// Monotonic timestamp when this snapshot was created.
@@ -44,14 +44,11 @@ public struct NetworkState: Equatable, Codable, Sendable, CustomStringConvertibl
 
     /// Helper constructor from `NWPath`.
     public static func from(nwPath: NWPath) -> NetworkState {
-        let isConnected = (nwPath.status == .satisfied)
-        let isExpensive = nwPath.isExpensive
-        let isConstrained = nwPath.isConstrained
+        let connected = nwPath.status == .satisfied
 
-        var interface: NetworkInterfaceType = .unknown
-        if let primaryInterface = nwPath.availableInterfaces.first {
-            interface = NetworkInterfaceType.from(nwInterfaceType: primaryInterface.type)
-        } else if nwPath.usesInterfaceType(.wifi) {
+        // availableInterfaces is NOT the selected route. Query usesInterfaceType.
+        let interface: NetworkInterfaceType
+        if nwPath.usesInterfaceType(.wifi) {
             interface = .wifi
         } else if nwPath.usesInterfaceType(.cellular) {
             interface = .cellular
@@ -59,19 +56,20 @@ public struct NetworkState: Equatable, Codable, Sendable, CustomStringConvertibl
             interface = .ethernet
         } else if nwPath.usesInterfaceType(.loopback) {
             interface = .loopback
+        } else {
+            interface = .unknown
         }
 
-        // On iOS/macOS, satisfied path without constraints generally implies Internet validation.
-        let isValidated = isConnected && !isConstrained
-        let isCaptivePortal = (nwPath.status == .requiresConnection) || (isConnected && isConstrained)
-
+        // NWPathMonitor does not validate Internet, detect captive portals, or
+        // distinguish VPNs reliably. A constrained (Low Data Mode) path is NOT
+        // evidence of a captive portal; a satisfied path is NOT HTTPS proof.
         return NetworkState(
-            isConnected: isConnected,
+            isConnected: connected,
             interfaceType: interface,
-            isExpensive: isExpensive,
-            isConstrained: isConstrained,
-            isInternetValidated: isValidated,
-            isCaptivePortalDetected: isCaptivePortal
+            isExpensive: nwPath.isExpensive,
+            isConstrained: nwPath.isConstrained,
+            isInternetValidated: false,
+            isCaptivePortalDetected: false
         )
     }
 

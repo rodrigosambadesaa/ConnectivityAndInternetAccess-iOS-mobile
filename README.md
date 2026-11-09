@@ -162,3 +162,9 @@ swift test --enable-code-coverage --parallel
 ## 📜 Licencia
 
 MIT License. Copyright (c) 2013 Emil Davtyan, 2017 str4d, 2026 Rodrigo Sambade Saa y colaboradores. Consulta el archivo [LICENSE](LICENSE) para más detalles.
+
+## Correcciones de diagnóstico (2026-11)
+
+- Un camino `NWPath.status == .satisfied` confirma una ruta, **no** Internet HTTP(S); `isInternetValidated` y `isCaptivePortalDetected` no se pueden deducir de Low Data Mode y permanecen en false/unknown en snapshots pasivos.
+- En modo estricto solo vale 204 sin cuerpo para endpoints `generate_204`, o 200 con el contenido exacto `Success` de Apple. Se rechazan redirecciones y HTML de login.
+- El preflight DNS tiene presupuesto de espera independiente; DNS nunca sustituye una prueba HTTPS. El temporizador total limita el tiempo de respuesta del pipeline, aunque las llamadas del sistema que ya estén en ejecución pueden finalizar después.
